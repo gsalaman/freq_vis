@@ -1,5 +1,5 @@
-// tweaked scrolltext demo for Adafruit RGBmatrixPanel library.
-// Added clock, removed bouncy-balls.
+// First iteration.  FFT sampling is dependent on loop frequency, so it's not calibrated, 
+//  and theres a bunch of aliasing (I worked out ~10 KHz sample rate)
 
 #include <Adafruit_GFX.h>   // Core graphics library
 #include <RGBmatrixPanel.h> // Hardware-specific library
