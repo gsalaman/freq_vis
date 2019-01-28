@@ -1,12 +1,8 @@
-// First iteration.  FFT sampling is dependent on loop frequency, so it's not calibrated, 
-//  and theres a bunch of aliasing (I worked out ~10 KHz sample rate)
-
+// Take 3.  Move back to UNO.  Figured out ADC register mappings.  Just gonna do serial print for this take.
 #include <Adafruit_GFX.h>   // Core graphics library
 #include <RGBmatrixPanel.h> // Hardware-specific library
 #include <arduinoFFT.h>
 
-// Similar to F(), but for PROGMEM string pointers rather than literals
-#define F2(progmem_ptr) (const __FlashStringHelper *)progmem_ptr
 
 #define CLK 11  // MUST be on PORTB! (Use pin 11 on Mega)
 #define LAT 10
@@ -29,26 +25,17 @@
 // Last parameter = 'true' enables double-buffering, for flicker-free,
 // buttery smooth animation.  Note that NOTHING WILL SHOW ON THE DISPLAY
 // until the first call to swapBuffers().  This is normal.
-RGBmatrixPanel matrix(A, B, C,  D,  CLK, LAT, OE, true);
+//RGBmatrixPanel matrix(A, B, C,  D,  CLK, LAT, OE, false);
 // Double-buffered mode consumes nearly all the RAM available on the
 // Arduino Uno -- only a handful of free bytes remain.  Even the
 // following string needs to go in PROGMEM:
 
+#define DISPLAY_COLUMNS 32
 
-// button unused.
-#define BUTTON_PIN 12
-int button_state;
-
-#define ENVELOPE_PIN A5
-#define AUDIO_PIN A4
-int max_sound_level=64;
-int min_sound_level=0;
-
-#define GAIN_PIN A15
-int gain=1;
+// Since I'm bit-banging the ADC register, I'm not using a define for Audio pin.  It's on 5.
 
 // These are the raw samples from the audio input.
-#define SAMPLE_SIZE 32
+#define SAMPLE_SIZE 128
 int sample[SAMPLE_SIZE] = {0};
 
 // These are used to do the FFT.
@@ -57,114 +44,93 @@ double vImag[SAMPLE_SIZE];
 arduinoFFT FFT = arduinoFFT();
 
 // This is our FFT output
-char data_avgs[SAMPLE_SIZE];
+char data_avgs[DISPLAY_COLUMNS];
+
+int gain=8;
+
 void setup() 
 {
   Serial.begin(9600);
   
-  matrix.begin();
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  //matrix.begin();
+
+  setupADC();
 
 }
 
-void collect_samples( void )
+void setupADC( void )
 {
+
+    ADCSRA = 0b11100101;      // set ADC to free running mode and set pre-scalar to 32 (0xe5)
+                              // pre-scalar 32 should give sample frequency of 40 KHz on the UNO
+                              // ...which will reproduce samples up to 20 KHz
+
+    //ADMUX = 0b01000101;       // use pin A5 and the internal 5v voltage reference
+    ADMUX = 0b00000101;         // Ext 5v rev.
+
+    delay(50);  //wait for voltages to stabalize. 
+}
+
+void collect_accurate_samples( void )
+{
+  //use ADC internals.
+
   int i;
-  for (i = 0; i < SAMPLE_SIZE; i++)
+
+  for (i=0; i<SAMPLE_SIZE; i++)
   {
-    sample[i] = analogRead(AUDIO_PIN);
+    while(!(ADCSRA & 0x10));        // wait for ADC to complete current conversion ie ADIF bit set
+    ADCSRA = 0b11110101 ;               // clear ADIF bit so that ADC can do next operation (0xf5)
+
+    sample[i] = ADC;
   }
 }
 
 #define SAMPLE_BIAS 512
-#define GAIN        8
-
-// Mapped sample should give a number between 0 and 31
-int map_sample( int input )
-{
-  int mapped_sample;
-  
-  // Looks like our samples are quiet, so I'm gonna start with a very quiet mapping.
-
-  // start by taking out DC bias.  This will make negative #s...
-  mapped_sample = input - SAMPLE_BIAS;
-
-  // Now make this a 0-31 number.  
-
-  // add in gain.
-  mapped_sample = mapped_sample / gain;
-  
-  // center on 16.
-  mapped_sample = mapped_sample + 16;
-
-  // and clip.
-  if (mapped_sample > 31) mapped_sample = 31;
-  if (mapped_sample < 0) mapped_sample = 0;
-
-  return mapped_sample;
-}
-
-void read_gain( void )
-{
-   int raw_gain;
-
-   raw_gain = analogRead(GAIN_PIN);
-   gain = map(raw_gain, 0, 1023, 1, 32);
-}
-
-void show_samples( void )
-{
-  int x;
-  int y;
-
-  matrix.fillScreen(0);
-  
-  for (x=0; x < SAMPLE_SIZE; x++)
-  {
-    y=map_sample(sample[x]);
-    matrix.drawPixel(x,y,matrix.Color333(0,0,1));
-  }
-}
-
-
-void show_samples_lines( void )
-{
-  int x;
-  int y;
-  int last_x=0;
-  int last_y=16;
-
-  matrix.fillScreen(0);
-  
-  for (x=0; x < SAMPLE_SIZE; x++)
-  {
-    y=map_sample(sample[x]);
-    matrix.drawLine(last_x,last_y,x,y,matrix.Color333(0,0,1));
-    last_x = x;
-    last_y = y;
-  }
-}
 
 void doFFT( void )
 {
   int i;
   int temp_sample;
+  long int total=0;
+  long int avg;
 
+#if 0
   for (i=0; i < SAMPLE_SIZE; i++)
   {
-    // Remove 512 DC bias
+    total = total + sample[i];
+  }
+  avg = total / SAMPLE_SIZE;
+  Serial.print("Avg: ");
+  Serial.println(avg);
+#endif
+
+  Serial.println("Mapped Samples:");
+  for (i=0; i < SAMPLE_SIZE; i++)
+  {
+    // Remove DC bias
+    //temp_sample = sample[i] - avg;
     temp_sample = sample[i] - SAMPLE_BIAS;
 
+    Serial.println(temp_sample);
+
+    // try and map this between 50 and -50
     // Load the sample into the complex number...some compression here.
-    vReal[i] = temp_sample/8;
+    //vReal[i] = temp_sample/8;
+    vReal[i] = temp_sample;
     vImag[i] = 0;
+    
   }
+
+  Serial.println("=====");
   
   FFT.Windowing(vReal, SAMPLE_SIZE, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
   FFT.Compute(vReal, vImag, SAMPLE_SIZE, FFT_FORWARD);
   FFT.ComplexToMagnitude(vReal, vImag, SAMPLE_SIZE);
 }
 
+
+#if 0
 void display_freq_raw( void )
 {
   int i;
@@ -181,21 +147,72 @@ void display_freq_raw( void )
   }
   
 }
+#endif
+
+
+void print_freq_mag( void )
+{
+  int i;
+  int freq;
+
+  // 20 KHz over 64 bins means about 320 Hz per bin.
+
+  Serial.println("FREQ Results");
+  for (i=0; i < SAMPLE_SIZE/2; i++)
+  {
+    freq = i*312;
+    Serial.print(freq);
+    Serial.print(" Hz = ");
+    Serial.println(vReal[i]);
+  }
+
+  Serial.println("========");
+}
+
+void print_samples( void )
+{
+  int i;
+
+  Serial.println("Sample Buffer: ");
+  for (i=0; i<SAMPLE_SIZE; i++)
+  {
+    Serial.println(sample[i]);
+  }
+  Serial.println("===================");
+}
 
 
 void loop() 
 {
-  //read_gain();
+  unsigned long start_time;
+  unsigned long stop_time;
+  unsigned long delta_t;
+  unsigned long per_sample;
+
+  start_time = micros();
+  collect_accurate_samples();
+  //collect_samples();
+  stop_time = micros();
   
-  collect_samples();
+  print_samples();
+
   doFFT();
-  display_freq_raw();
   
-  //show_samples_lines();
-
-  //Serial.println(gain);
+  delta_t = stop_time - start_time;
+  per_sample = delta_t / SAMPLE_SIZE;
   
-  // Update display
-  matrix.swapBuffers(true);
+  Serial.print("Time to collect samples (us): ");
+  Serial.println( (stop_time - start_time ) );
+  Serial.print(per_sample);
+  Serial.print(" us per sample (");
+  Serial.print( 1000000 / per_sample);
+  Serial.println(" Hz)");
 
+  print_freq_mag();
+
+
+  Serial.println("hit enter for next sampling");
+  while (!Serial.available());
+  while (Serial.available()) Serial.read();
+  
 }
