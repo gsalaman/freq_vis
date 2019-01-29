@@ -1,4 +1,5 @@
-// Take 3.  Move back to UNO.  Figured out ADC register mappings.  Just gonna do serial print for this take.
+// Mega, serial prints commented out.  Line in is noisy, but with decent volume, it sorta works.
+// Note gain commented out...we're hardcoded.
 #include <Adafruit_GFX.h>   // Core graphics library
 #include <RGBmatrixPanel.h> // Hardware-specific library
 #include <arduinoFFT.h>
@@ -25,7 +26,7 @@
 // Last parameter = 'true' enables double-buffering, for flicker-free,
 // buttery smooth animation.  Note that NOTHING WILL SHOW ON THE DISPLAY
 // until the first call to swapBuffers().  This is normal.
-//RGBmatrixPanel matrix(A, B, C,  D,  CLK, LAT, OE, false);
+RGBmatrixPanel matrix(A, B, C,  D,  CLK, LAT, OE, true);
 // Double-buffered mode consumes nearly all the RAM available on the
 // Arduino Uno -- only a handful of free bytes remain.  Even the
 // following string needs to go in PROGMEM:
@@ -35,7 +36,7 @@
 // Since I'm bit-banging the ADC register, I'm not using a define for Audio pin.  It's on 5.
 
 // These are the raw samples from the audio input.
-#define SAMPLE_SIZE 128
+#define SAMPLE_SIZE 64
 int sample[SAMPLE_SIZE] = {0};
 
 // These are used to do the FFT.
@@ -52,7 +53,7 @@ void setup()
 {
   Serial.begin(9600);
   
-  //matrix.begin();
+  matrix.begin();
 
   setupADC();
 
@@ -62,7 +63,7 @@ void setupADC( void )
 {
 
     ADCSRA = 0b11100101;      // set ADC to free running mode and set pre-scalar to 32 (0xe5)
-                              // pre-scalar 32 should give sample frequency of 40 KHz on the UNO
+                              // pre-scalar 32 should give sample frequency of 40 KHz 
                               // ...which will reproduce samples up to 20 KHz
 
     //ADMUX = 0b01000101;       // use pin A5 and the internal 5v voltage reference
@@ -105,24 +106,25 @@ void doFFT( void )
   Serial.println(avg);
 #endif
 
-  Serial.println("Mapped Samples:");
+  //Serial.println("Mapped Samples:");
+  
   for (i=0; i < SAMPLE_SIZE; i++)
   {
     // Remove DC bias
     //temp_sample = sample[i] - avg;
     temp_sample = sample[i] - SAMPLE_BIAS;
 
-    Serial.println(temp_sample);
+    //Serial.println(temp_sample);
 
-    // try and map this between 50 and -50
+
     // Load the sample into the complex number...some compression here.
-    //vReal[i] = temp_sample/8;
-    vReal[i] = temp_sample;
+    vReal[i] = temp_sample/8;
+    //vReal[i] = temp_sample;
     vImag[i] = 0;
     
   }
 
-  Serial.println("=====");
+  //Serial.println("=====");
   
   FFT.Windowing(vReal, SAMPLE_SIZE, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
   FFT.Compute(vReal, vImag, SAMPLE_SIZE, FFT_FORWARD);
@@ -130,7 +132,7 @@ void doFFT( void )
 }
 
 
-#if 0
+#define MAX_FREQ_MAG 200
 void display_freq_raw( void )
 {
   int i;
@@ -138,16 +140,16 @@ void display_freq_raw( void )
 
   matrix.fillScreen(0);
   
-  for (i = 0; i < SAMPLE_SIZE; i++)
+  for (i = 0; i < SAMPLE_SIZE/2; i++)
   {
-    mag = constrain(vReal[i], 0, 40);
-    mag = map(mag, 0, 40, 31, 0);
+    mag = constrain(vReal[i], 0, MAX_FREQ_MAG);
+    mag = map(mag, 0, MAX_FREQ_MAG, 31, 0);
 
     matrix.drawLine(i,31,i,mag, matrix.Color333(1,0,0));
   }
-  
+
+  matrix.swapBuffers(true);
 }
-#endif
 
 
 void print_freq_mag( void )
@@ -155,12 +157,12 @@ void print_freq_mag( void )
   int i;
   int freq;
 
-  // 20 KHz over 64 bins means about 320 Hz per bin.
+  // 20 KHz over 32 bins means 625 Hz per bin.
 
   Serial.println("FREQ Results");
   for (i=0; i < SAMPLE_SIZE/2; i++)
   {
-    freq = i*312;
+    freq = i*625;
     Serial.print(freq);
     Serial.print(" Hz = ");
     Serial.println(vReal[i]);
@@ -194,25 +196,28 @@ void loop()
   //collect_samples();
   stop_time = micros();
   
-  print_samples();
+  //print_samples();
 
   doFFT();
-  
+
+#if 0
   delta_t = stop_time - start_time;
   per_sample = delta_t / SAMPLE_SIZE;
-  
   Serial.print("Time to collect samples (us): ");
   Serial.println( (stop_time - start_time ) );
   Serial.print(per_sample);
   Serial.print(" us per sample (");
   Serial.print( 1000000 / per_sample);
   Serial.println(" Hz)");
-
   print_freq_mag();
+#endif
 
+  display_freq_raw();
 
+#if 0
   Serial.println("hit enter for next sampling");
   while (!Serial.available());
   while (Serial.available()) Serial.read();
-  
+#endif
+
 }
